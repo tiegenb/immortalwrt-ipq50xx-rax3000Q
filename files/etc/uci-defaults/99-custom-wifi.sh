@@ -17,20 +17,21 @@ uci set wireless.radio0.noscan='1'
 uci set wireless.radio0.htmode='HE40'
 # 开启 256-QAM 等相关特性 (通过 LDPC 开启)
 uci set wireless.radio0.ldpc='1'
-# 开启 MU-MIMO
+# 开启 MU-MIMO (2.4G)
 uci set wireless.radio0.mu_beamformer='1'
 
-# 3. 确保 5G 射频 (radio1) 配置正确 (撤销可能的错误设置)
-# 删除可能被错误设置的参数
+# 3. 配置 5G 射频 (radio1)
+# 删除可能被错误设置的参数（如果有的话）
 uci del wireless.radio1.noscan 2>/dev/null
-# 请根据你之前的配置选择其一，HE160代表开启160MHz
+# 设置5G带宽模式（HE80=80MHz，HE160=160MHz）
 uci set wireless.radio1.htmode='HE80'
 # 开启 MU-MIMO (5G)
 uci set wireless.radio1.mu_beamformer='1'
+
 # 提交所有更改
 uci commit wireless
 
-# 重启网络服务使配置生效
-/etc/init.d/network restart
+# 重启Wi-Fi接口（比重启网络更精确，不会影响有线连接）
+wifi restart
 
 exit 0
