@@ -6,6 +6,7 @@ lookup_phy() {
 	[ -n "$phy" ] && {
 		[ -d /sys/class/ieee80211/$phy ] && return
 	}
+
 	local devpath
 	config_get devpath "$device" path
 	[ -n "$devpath" ] && {
@@ -129,20 +130,16 @@ get_band_defaults() {
 		[ -n "$mode_band" -a "$band" = "6g" ] && return
 
 		mode_band="$band"
-		channel="$chan"
-		htmode="$mode"
+		
+		# 只修改2.4G的配置，5G保持原样
+		if [ "$band" = "2g" ]; then
+			channel="auto"  # 2.4G信道自动
+			htmode="HE40"   # 强制40MHz 802.11ax
+		else
+			channel="$chan"
+			htmode="$mode"
+		fi
 	done
-}
-
-# 启用 MU-MIMO 的函数
-enable_mu_mimo() {
-	local phy="$1"
-	# 尝试启用 MU-MIMO（如果硬件支持）
-	iw "$phy" set antenna_gain 0 2>/dev/null
-	# 某些驱动通过 debugfs 启用 MU-MIMO
-	if [ -d "/sys/kernel/debug/ieee80211/$phy" ]; then
-		echo 1 > "/sys/kernel/debug/ieee80211/$phy/mu_mimo" 2>/dev/null
-	fi
 }
 
 detect_mac80211() {
@@ -177,66 +174,40 @@ detect_mac80211() {
 			dev_id="set wireless.radio${devidx}.macaddr=$(cat /sys/class/ieee80211/${dev}/macaddress)"
 		fi
 
-		# 根据频段设置不同的 SSID
+		# 根据频段设置不同的SSID和额外配置
 		if [ "$mode_band" = "2g" ]; then
 			ssid_name="铁哥中继器-2.4G"
-			fixed_channel="6"
-			htmode="HT40"
-			txpower="18"
+			# 2.4G额外开启256-QAM的配置
+			extra_config="set wireless.radio${devidx}.he_bss_color=1
+			set wireless.radio${devidx}.he_su_beamformer=1"
 		else
 			ssid_name="铁哥中继器-5G"
-			# 5G 保持驱动自动检测的所有配置，不做任何修改
-			fixed_channel=""
-			txpower=""
-			# 注意：不修改 channel 和 htmode，保持驱动检测到的值
+			extra_config=""
 		fi
 
-		# 构建 UCI 配置
+		# 构建配置
 		uci -q batch <<-EOF
 			set wireless.radio${devidx}=wifi-device
 			set wireless.radio${devidx}.type=mac80211
 			${dev_id}
+			set wireless.radio${devidx}.channel=${channel}
+			set wireless.radio${devidx}.band=${mode_band}
+			set wireless.radio${devidx}.htmode=$htmode
 			set wireless.radio${devidx}.country=CN
 			set wireless.radio${devidx}.disabled=0
-EOF
+			# 两个频段都开启MU-MIMO
+			set wireless.radio${devidx}.mu_beamformer=1
+			set wireless.radio${devidx}.mu_beamformee=1
+			${extra_config}
 
-		# 设置信道（2.4G 固定为 6，5G 保持驱动检测值）
-		if [ -n "$fixed_channel" ]; then
-			uci set wireless.radio${devidx}.channel="$fixed_channel"
-		else
-			# 5G：完全使用驱动自动检测的信道
-			[ -n "$channel" ] && uci set wireless.radio${devidx}.channel="$channel"
-		fi
-
-		# 设置频段
-		uci set wireless.radio${devidx}.band="$mode_band"
-		
-		# 设置 HT 模式（2.4G 强制 HT40，5G 保持驱动检测值）
-		if [ "$mode_band" = "2g" ]; then
-			uci set wireless.radio${devidx}.htmode="$htmode"
-		else
-			# 5G：使用驱动自动检测的 htmode
-			[ -n "$htmode" ] && uci set wireless.radio${devidx}.htmode="$htmode"
-		fi
-
-		# 设置功率（仅 2.4G）
-		if [ -n "$txpower" ]; then
-			uci set wireless.radio${devidx}.txpower="$txpower"
-		fi
-
-		uci -q batch <<-EOF
 			set wireless.default_radio${devidx}=wifi-iface
 			set wireless.default_radio${devidx}.device=radio${devidx}
 			set wireless.default_radio${devidx}.network=lan
 			set wireless.default_radio${devidx}.mode=ap
-			set wireless.default_radio${devidx}.ssid="$ssid_name"
+			set wireless.default_radio${devidx}.ssid=${ssid_name}
 			set wireless.default_radio${devidx}.encryption=none
 EOF
-
 		uci -q commit wireless
-
-		# 启用 MU-MIMO（所有频段都启用）
-		enable_mu_mimo "$dev"
 
 		devidx=$(($devidx + 1))
 	done
